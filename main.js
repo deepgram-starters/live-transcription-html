@@ -1,321 +1,503 @@
-const streamUrlInput = document.getElementById('stream-url-input');
-const modelInput = document.getElementById('model-input');
-const languageInput = document.getElementById('language-input');
-const startButton = document.getElementById('start-button');
-const cancelButton = document.getElementById('cancel-button');
-const stopButton = document.getElementById('stop-button');
-const clearButton = document.getElementById('clear-transcript');
-const statusIndicator = document.getElementById('status-indicator');
-const statusText = document.getElementById('status-text');
-const transcriptContainer = document.getElementById('transcript-container');
+/**
+ * Live Transcription Frontend
+ * Connects to backend WebSocket proxy for Deepgram Live Transcription
+ * Uses microphone for audio input
+ */
 
+// ============================================================================
+// STATE MANAGEMENT
+// ============================================================================
 
-let websocket = null;
-let isConnected = false;
-let isConnecting = false;
+const state = {
+  ws: null,
+  isConnected: false,
+  audioContext: null,
+  mediaStream: null,
+  audioProcessor: null,
+  stats: {
+    messages: 0,
+    finals: 0
+  },
+  config: {
+    model: 'nova-3',
+    language: 'en'
+  }
+};
 
+// ============================================================================
+// DOM ELEMENTS
+// ============================================================================
 
-function showStatus(message, type = 'info') {
-  statusText.textContent = message;
-  statusIndicator.className = `dg-status dg-status--${type}`;
-  statusIndicator.style.display = 'flex';
+const elements = {
+  // Metadata
+  pageTitle: document.getElementById('pageTitle'),
+  pageDescription: document.getElementById('pageDescription'),
+  headerTitle: document.getElementById('headerTitle'),
+  repoLink: document.getElementById('repoLink'),
+
+  // Config
+  modelSelect: document.getElementById('model-select'),
+  languageInput: document.getElementById('language-input'),
+
+  // UI controls
+  connectOverlay: document.getElementById('connect-overlay'),
+  connectBtn: document.getElementById('connect-btn'),
+  disconnectContainer: document.getElementById('disconnect-container'),
+  disconnectBtn: document.getElementById('disconnect-btn'),
+
+  // Transcript
+  transcriptContainer: document.getElementById('transcript-container'),
+  emptyState: document.getElementById('empty-state'),
+
+  // Status
+  connectionStatus: document.getElementById('connection-status'),
+  micStatus: document.getElementById('mic-status'),
+  currentModel: document.getElementById('current-model'),
+  currentLanguage: document.getElementById('current-language'),
+  messageCount: document.getElementById('message-count'),
+  finalCount: document.getElementById('final-count')
+};
+
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
+
+document.addEventListener('DOMContentLoaded', () => {
+  initializeEventListeners();
+  loadMetadata();
+});
+
+function initializeEventListeners() {
+  elements.connectBtn.addEventListener('click', connect);
+  elements.disconnectBtn.addEventListener('click', disconnect);
+
+  // Cleanup on page unload
+  window.addEventListener('beforeunload', () => {
+    disconnect();
+  });
 }
 
-function hideStatus() {
-  statusIndicator.style.display = 'none';
+// ============================================================================
+// METADATA LOADING
+// ============================================================================
+
+async function loadMetadata() {
+  try {
+    const response = await fetch('/metadata');
+    if (!response.ok) {
+      console.warn('Failed to load metadata, using defaults');
+      return;
+    }
+
+    const metadata = await response.json();
+
+    // Update page title
+    if (metadata.title && elements.pageTitle) {
+      elements.pageTitle.textContent = metadata.title;
+    }
+
+    // Update page description
+    if (metadata.description && elements.pageDescription) {
+      elements.pageDescription.setAttribute('content', metadata.description);
+    }
+
+    // Update header title
+    if (metadata.title && elements.headerTitle) {
+      elements.headerTitle.textContent = metadata.title;
+    }
+
+    // Update repository link
+    if (metadata.repository && elements.repoLink) {
+      elements.repoLink.href = metadata.repository;
+    }
+
+    console.log('Metadata loaded:', metadata);
+  } catch (error) {
+    console.warn('Error loading metadata, using defaults:', error);
+  }
 }
 
-function clearTranscript() {
-  transcriptContainer.innerHTML = `
-    <div class="transcript-placeholder">
-      <i class="fa-solid fa-tower-broadcast" style="font-size: 3rem; opacity: 0.3; margin-bottom: 1rem;"></i>
-      <p>Enter an audio stream URL and click "Start Transcription" to begin...</p>
-    </div>
-  `;
+// ============================================================================
+// WEBSOCKET CONNECTION
+// ============================================================================
+
+async function connect() {
+  if (state.isConnected) return;
+
+  // Get configuration
+  state.config.model = elements.modelSelect.value;
+  state.config.language = elements.languageInput.value;
+
+  // Update UI
+  elements.connectBtn.disabled = true;
+  // Clear and set button content safely
+  while (elements.connectBtn.firstChild) {
+    elements.connectBtn.removeChild(elements.connectBtn.firstChild);
+  }
+  const spinner = document.createElement('i');
+  spinner.className = 'fa-solid fa-spinner fa-spin';
+  elements.connectBtn.appendChild(spinner);
+  elements.connectBtn.appendChild(document.createTextNode(' Connecting...'));
+
+  try {
+    // Build WebSocket URL with audio format parameters
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const params = new URLSearchParams({
+      model: state.config.model,
+      language: state.config.language,
+      encoding: 'linear16',  // We convert to Int16 PCM
+      sample_rate: '16000',   // Requested audio context sample rate
+      channels: '1'           // Mono audio
+    });
+    const wsUrl = `${protocol}//${window.location.host}/stt/stream?${params}`;
+
+    console.log('Connecting with params:', {
+      model: state.config.model,
+      language: state.config.language,
+      encoding: 'linear16',
+      sample_rate: 16000,
+      channels: 1
+    });
+
+    // Create WebSocket
+    state.ws = new WebSocket(wsUrl);
+    state.ws.binaryType = 'arraybuffer';
+
+    state.ws.onopen = handleWebSocketOpen;
+    state.ws.onmessage = handleWebSocketMessage;
+    state.ws.onclose = handleWebSocketClose;
+    state.ws.onerror = handleWebSocketError;
+
+  } catch (error) {
+    console.error('Connection error:', error);
+    showError('Failed to connect to server');
+    resetConnectButton();
+  }
 }
 
-function addTranscriptItem(transcript, isFinal, metadata = {}) {
-  // Remove placeholder if it exists
-  const placeholder = transcriptContainer.querySelector('.transcript-placeholder');
-  if (placeholder) {
-    placeholder.remove();
+function handleWebSocketOpen() {
+  console.log('WebSocket connected');
+  onConnected();
+}
+
+function handleWebSocketMessage(event) {
+  try {
+    const data = JSON.parse(event.data);
+
+    // Update message count
+    state.stats.messages++;
+    elements.messageCount.textContent = state.stats.messages;
+
+    // Handle different message types from Deepgram
+    if (data.type === 'Results' || data.channel) {
+      const transcript = data.channel?.alternatives?.[0]?.transcript || data.transcript || '';
+      const isFinal = data.is_final || data.speech_final || false;
+
+      if (transcript) {
+        addTranscriptItem(transcript, isFinal);
+
+        if (isFinal) {
+          state.stats.finals++;
+          elements.finalCount.textContent = state.stats.finals;
+        }
+      }
+    } else if (data.type === 'Metadata') {
+      console.log('Metadata:', data);
+    } else if (data.error) {
+      console.error('Deepgram error:', data);
+    }
+  } catch (error) {
+    console.error('Error parsing message:', error);
+  }
+}
+
+function handleWebSocketError(error) {
+  console.error('WebSocket error:', error);
+  updateConnectionStatus(false, 'Error');
+}
+
+function handleWebSocketClose(event) {
+  console.log('WebSocket closed:', event.code, event.reason);
+  state.isConnected = false;
+  updateConnectionStatus(false, 'Disconnected');
+  updateMicrophoneStatus(false);
+
+  // Show reconnect UI after delay
+  setTimeout(() => {
+    if (!state.isConnected) {
+      elements.transcriptContainer.classList.add('hidden');
+      elements.disconnectContainer.classList.add('hidden');
+      elements.connectOverlay.classList.remove('hidden');
+      resetConnectButton();
+    }
+  }, 2000);
+}
+
+// ============================================================================
+// CONNECTION LIFECYCLE
+// ============================================================================
+
+async function onConnected() {
+  console.log('WebSocket connected, requesting microphone...');
+
+  // Set connected early so audio processor can send data
+  state.isConnected = true;
+
+  // Update status
+  updateConnectionStatus(false, 'Requesting microphone...');
+  elements.currentModel.textContent = state.config.model;
+  elements.currentLanguage.textContent = state.config.language;
+
+  // Disable config while connecting
+  elements.modelSelect.disabled = true;
+  elements.languageInput.disabled = true;
+
+  try {
+    // Initialize audio context
+    await initializeAudioContext();
+
+    // Automatically open microphone
+    await startMicrophone();
+
+    // Update UI
+    elements.connectOverlay.classList.add('hidden');
+    elements.disconnectContainer.classList.remove('hidden');
+    elements.transcriptContainer.classList.remove('hidden');
+
+    updateConnectionStatus(true, 'Connected');
+    console.log('Fully connected - microphone active, ready to transcribe');
+
+  } catch (error) {
+    console.error('Failed to initialize audio:', error);
+    state.isConnected = false;
+    showError('Failed to access microphone. Please allow microphone access and try again.');
+    disconnect();
+  }
+}
+
+function disconnect() {
+  // Close WebSocket
+  if (state.ws) {
+    state.ws.close(1000, 'User disconnected');
+    state.ws = null;
   }
 
-  // Create transcript item
+  // Stop microphone and audio processor
+  if (state.audioProcessor) {
+    state.audioProcessor.disconnect();
+    state.audioProcessor = null;
+  }
+
+  if (state.mediaStream) {
+    state.mediaStream.getTracks().forEach(track => track.stop());
+    state.mediaStream = null;
+  }
+
+  state.isConnected = false;
+
+  // Update UI
+  updateConnectionStatus(false, 'Disconnected');
+  updateMicrophoneStatus(false);
+  elements.currentModel.textContent = '-';
+  elements.currentLanguage.textContent = '-';
+
+  // Re-enable config
+  elements.modelSelect.disabled = false;
+  elements.languageInput.disabled = false;
+
+  // Show connect overlay
+  elements.transcriptContainer.classList.add('hidden');
+  elements.disconnectContainer.classList.add('hidden');
+  elements.connectOverlay.classList.remove('hidden');
+  resetConnectButton();
+}
+
+function resetConnectButton() {
+  elements.connectBtn.disabled = false;
+  // Clear and set button content safely
+  while (elements.connectBtn.firstChild) {
+    elements.connectBtn.removeChild(elements.connectBtn.firstChild);
+  }
+  const icon = document.createElement('i');
+  icon.className = 'fa-solid fa-plug';
+  elements.connectBtn.appendChild(icon);
+  elements.connectBtn.appendChild(document.createTextNode(' Connect'));
+}
+
+// ============================================================================
+// AUDIO CONTEXT
+// ============================================================================
+
+async function initializeAudioContext() {
+  if (state.audioContext) return;
+
+  try {
+    state.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: 16000,
+    });
+
+    // Resume audio context on user interaction if needed
+    if (state.audioContext.state === 'suspended') {
+      await state.audioContext.resume();
+    }
+
+    console.log(`Audio context initialized: ${state.audioContext.sampleRate}Hz, ${state.audioContext.state}`);
+  } catch (error) {
+    console.error('Failed to initialize audio context:', error);
+    showError('Failed to initialize audio system');
+  }
+}
+
+// ============================================================================
+// MICROPHONE CAPTURE
+// ============================================================================
+
+async function startMicrophone() {
+  if (state.mediaStream) {
+    console.log('Microphone already active');
+    return;
+  }
+
+  updateMicrophoneStatus('Requesting...');
+  console.log('Requesting microphone access...');
+
+  // Request microphone access
+  state.mediaStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      sampleRate: 16000,
+      echoCancellation: true,
+      noiseSuppression: true,
+    },
+  });
+
+  console.log('Microphone access granted');
+
+  // Create audio processing pipeline
+  if (!state.audioContext) {
+    await initializeAudioContext();
+  }
+
+  const source = state.audioContext.createMediaStreamSource(state.mediaStream);
+  state.audioProcessor = state.audioContext.createScriptProcessor(4096, 1, 1);
+
+  let audioChunkCount = 0;
+  state.audioProcessor.onaudioprocess = (e) => {
+    if (!state.isConnected) return;
+
+    const inputData = e.inputBuffer.getChannelData(0);
+
+    // Convert float32 to int16
+    const pcm16 = new Int16Array(inputData.length);
+    for (let i = 0; i < inputData.length; i++) {
+      const s = Math.max(-1, Math.min(1, inputData[i]));
+      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+
+    // Send binary audio to WebSocket
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      try {
+        state.ws.send(pcm16.buffer);
+        audioChunkCount++;
+        if (audioChunkCount === 1) {
+          console.log(`✓ First audio chunk sent (${pcm16.buffer.byteLength} bytes)`);
+        } else if (audioChunkCount % 50 === 0) {
+          console.log(`Sent ${audioChunkCount} audio chunks to server`);
+        }
+      } catch (error) {
+        console.error('Error sending audio chunk:', error);
+      }
+    }
+  };
+
+  source.connect(state.audioProcessor);
+  state.audioProcessor.connect(state.audioContext.destination);
+
+  console.log('Audio processing pipeline connected');
+
+  // Update status
+  updateMicrophoneStatus(true);
+  console.log('Microphone active - ready to transcribe');
+}
+
+// ============================================================================
+// UI UPDATES
+// ============================================================================
+
+function updateConnectionStatus(connected, text) {
+  elements.connectionStatus.className = connected
+    ? 'status-badge status-badge--connected'
+    : 'status-badge status-badge--disconnected';
+
+  // Clear existing content
+  while (elements.connectionStatus.firstChild) {
+    elements.connectionStatus.removeChild(elements.connectionStatus.firstChild);
+  }
+
+  // Add indicator
+  const indicator = document.createElement('span');
+  indicator.className = connected
+    ? 'status-indicator status-indicator--connected'
+    : 'status-indicator status-indicator--disconnected';
+  elements.connectionStatus.appendChild(indicator);
+
+  // Add text
+  elements.connectionStatus.appendChild(document.createTextNode(text));
+}
+
+function updateMicrophoneStatus(active) {
+  if (active === true) {
+    elements.micStatus.textContent = 'Active';
+    elements.micStatus.style.color = 'var(--dg-primary, #13ef95)';
+  } else if (active === false) {
+    elements.micStatus.textContent = 'Inactive';
+    elements.micStatus.style.color = '';
+  } else {
+    // String value (e.g., "Requesting...")
+    elements.micStatus.textContent = active;
+    elements.micStatus.style.color = '';
+  }
+}
+
+function addTranscriptItem(text, isFinal) {
+  // Remove empty state if present
+  if (elements.emptyState && !elements.emptyState.classList.contains('hidden')) {
+    elements.emptyState.classList.add('hidden');
+  }
+
   const item = document.createElement('div');
   item.className = isFinal ? 'transcript-item' : 'transcript-item transcript-item--interim';
 
-  // Add metadata
-  let metaHtml = '';
-  if (metadata.confidence !== undefined) {
-    metaHtml += `<div class="transcript-meta">Confidence: ${(metadata.confidence * 100).toFixed(1)}%</div>`;
-  }
+  // Add timestamp
+  const timestamp = document.createElement('div');
+  timestamp.className = 'transcript-item__timestamp';
+  timestamp.textContent = new Date().toLocaleTimeString();
+  item.appendChild(timestamp);
 
-  // Add transcript text
-  item.innerHTML = `
-    ${metaHtml}
-    <div class="transcript-text">${escapeHtml(transcript)}</div>
-  `;
+  // Add text
+  const textDiv = document.createElement('div');
+  textDiv.className = 'transcript-item__text';
+  textDiv.textContent = text;
+  item.appendChild(textDiv);
 
-  // If this is an interim result, check if we should replace the last interim
-  const lastItem = transcriptContainer.lastElementChild;
-  if (!isFinal && lastItem && lastItem.classList.contains('transcript-item--interim')) {
-    lastItem.replaceWith(item);
+  // Replace last interim or append new
+  const lastItem = elements.transcriptContainer.lastElementChild;
+  if (!isFinal && lastItem && lastItem !== elements.emptyState && lastItem.classList.contains('transcript-item--interim')) {
+    elements.transcriptContainer.replaceChild(item, lastItem);
   } else {
-    transcriptContainer.appendChild(item);
+    elements.transcriptContainer.appendChild(item);
   }
 
-  // Auto-scroll to bottom
-  transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+  // Auto-scroll
+  elements.transcriptContainer.scrollTop = elements.transcriptContainer.scrollHeight;
 }
 
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
+function showError(message) {
+  alert(message);
 }
 
-function startTranscription() {
-  const streamUrl = streamUrlInput.value.trim();
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
 
-  if (!streamUrl) {
-    showStatus('Please enter a stream URL', 'error');
-    return;
-  }
-
-  // Validate URL format
-  try {
-    const url = new URL(streamUrl);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      showStatus('Stream URL must use http:// or https://', 'error');
-      return;
-    }
-  } catch (error) {
-    showStatus('Invalid stream URL format', 'error');
-    return;
-  }
-
-  // Build WebSocket URL with query parameters
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsHost = window.location.host;
-
-  const params = new URLSearchParams({
-    model: modelInput.value.trim() || 'nova-3',
-    language: languageInput.value.trim() || 'en',
-  });
-
-  const wsUrl = `${wsProtocol}//${wsHost}/live-stt/stream?${params.toString()}`;
-
-  showStatus('Connecting to server...', 'info');
-
-  // Update UI for connecting state
-  isConnecting = true;
-  startButton.hidden = true;
-  cancelButton.hidden = false;
-  streamUrlInput.disabled = true;
-  modelInput.disabled = true;
-  languageInput.disabled = true;
-
-  try {
-    websocket = new WebSocket(wsUrl);
-    websocket.binaryType = 'arraybuffer';
-
-    websocket.onopen = async () => {
-      isConnecting = false;
-      isConnected = true;
-      showStatus('Connected - fetching stream...', 'success');
-
-      // Update UI - switch from cancel to stop button
-      cancelButton.hidden = true;
-      stopButton.hidden = false;
-      stopButton.disabled = false;
-
-      clearTranscript();
-
-      // Frontend fetches the stream and sends binary to server
-      try {
-        showStatus('Streaming audio...', 'success');
-        const response = await fetch(streamUrl);
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch stream: ${response.statusText}`);
-        }
-
-        const reader = response.body.getReader();
-
-        while (true) {
-          const { done, value } = await reader.read();
-
-          if (done) {
-            console.log('Stream ended');
-            showStatus('Stream ended', 'info');
-            stopTranscription();
-            break;
-          }
-
-          // Send binary audio chunk to server
-          if (websocket && websocket.readyState === WebSocket.OPEN && value) {
-            websocket.send(value.buffer);
-          }
-
-          // Stop if connection closed
-          if (!isConnected) {
-            reader.cancel();
-            break;
-          }
-        }
-      } catch (streamError) {
-        console.error('Stream fetch error:', streamError);
-        showStatus(`Stream error: ${streamError.message}`, 'error');
-        stopTranscription();
-      }
-    };
-
-    websocket.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-
-        switch (message.type) {
-          case 'Metadata':
-            showStatus(`Transcribing with model: ${message.model_info?.name || 'unknown'}`, 'success');
-            break;
-
-          case 'Results':
-            // Display transcript result
-            if (message.transcript) {
-              addTranscriptItem(
-                message.transcript,
-                message.is_final || false,
-                {
-                  confidence: message.confidence,
-                  speechFinal: message.speech_final
-                }
-              );
-            }
-            break;
-
-          case 'Error':
-            console.error('Error from server:', message.error);
-            showStatus(`Error: ${message.error.message}`, 'error');
-
-            // Reset state immediately
-            isConnecting = false;
-            isConnected = false;
-
-            // Close websocket if still open
-            if (websocket) {
-              websocket.close(1000, 'Client closing due to error');
-              websocket = null;
-            }
-
-            // Reset UI immediately so user can try again
-            resetUI();
-            break;
-
-          default:
-            console.log('Unknown message type:', message.type);
-        }
-      } catch (error) {
-        console.error('Error parsing message:', error);
-      }
-    };
-
-    websocket.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      showStatus('Connection error occurred', 'error');
-    };
-
-    websocket.onclose = (event) => {
-      isConnecting = false;
-      isConnected = false;
-
-      // Code 1011: Server error - don't overwrite the error message already shown
-      if (event.code === 1011) {
-        // Error message was already displayed via the 'Error' message type
-        // Just reset UI silently
-      } else if (event.code === 1008) {
-        // Policy violation (e.g., invalid parameters)
-        showStatus(`Connection closed: ${event.reason || 'Invalid request'}`, 'error');
-      } else if (event.code === 1000) {
-        // Normal closure
-        showStatus('Connection closed', 'info');
-      } else if (event.code === 1006) {
-        // Abnormal closure (connection dropped)
-        showStatus('Connection lost', 'warning');
-      } else {
-        // Unknown close code
-        showStatus(`Connection closed unexpectedly (code: ${event.code})`, 'warning');
-      }
-
-      resetUI();
-    };
-
-  } catch (error) {
-    console.error('Error creating WebSocket:', error);
-    showStatus('Failed to create connection', 'error');
-    isConnecting = false;
-    resetUI();
-  }
-}
-
-function cancelConnection() {
-  showStatus('Connection canceled', 'info');
-
-  if (websocket) {
-    // Close the WebSocket if it exists
-    try {
-      websocket.close(1000, 'User canceled');
-    } catch (error) {
-      console.error('Error closing WebSocket:', error);
-    }
-    websocket = null;
-  }
-
-  isConnecting = false;
-  isConnected = false;
-  resetUI();
-}
-
-function stopTranscription() {
-  if (websocket && isConnected) {
-    showStatus('Stopping transcription...', 'info');
-    websocket.close();
-    websocket = null;
-  }
-  isConnected = false;
-  resetUI();
-}
-
-function resetUI() {
-  // Reset all UI elements to initial state
-  startButton.hidden = false;
-  startButton.disabled = false;
-  cancelButton.hidden = true;
-  stopButton.hidden = true;
-  stopButton.disabled = true;
-  streamUrlInput.disabled = false;
-  modelInput.disabled = false;
-  languageInput.disabled = false;
-}
-
-startButton.addEventListener('click', startTranscription);
-cancelButton.addEventListener('click', cancelConnection);
-stopButton.addEventListener('click', stopTranscription);
-clearButton.addEventListener('click', clearTranscript);
-
-// Allow Enter key in stream URL input to start
-streamUrlInput.addEventListener('keypress', (e) => {
-  if (e.key === 'Enter' && !startButton.disabled) {
-    startTranscription();
-  }
-});
-
-// Clean up on page unload
-window.addEventListener('beforeunload', () => {
-  if (websocket && isConnected) {
-    websocket.close();
-  }
-});
-
-hideStatus();
-
+console.log('Live Transcription frontend initialized');

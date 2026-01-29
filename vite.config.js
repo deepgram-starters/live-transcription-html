@@ -3,13 +3,20 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   root: '.',
   server: {
-    port: 5173,
+    port: parseInt(process.env.VITE_PORT || '8081'),
+    strictPort: true,
     open: false,
-    host: true
+    host: true,
+    proxy: {
+      '/api/metadata': {
+        target: 'http://localhost:8080',
+        changeOrigin: true
+      }
+    }
   },
   preview: {
-    port: 5173,
-    open: true,
+    port: 4173,
+    open: false,
     host: true
   },
   build: {

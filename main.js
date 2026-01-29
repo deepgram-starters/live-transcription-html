@@ -83,7 +83,7 @@ function initializeEventListeners() {
 
 async function loadMetadata() {
   try {
-    const response = await fetch('/metadata');
+    const response = await fetch('/api/metadata');
     if (!response.ok) {
       console.warn('Failed to load metadata, using defaults');
       return;

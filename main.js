@@ -5,6 +5,18 @@
  */
 
 // ============================================================================
+// CONFIGURATION - Customize these values for your needs
+// ============================================================================
+
+/**
+ * Backend server configuration
+ * The backend port can be configured via VITE_BACKEND_PORT environment variable
+ */
+const BACKEND_PORT = import.meta.env.VITE_BACKEND_PORT || '8081';
+const API_BASE_URL = `http://localhost:${BACKEND_PORT}`;
+const WS_BASE_URL = `ws://localhost:${BACKEND_PORT}`;
+
+// ============================================================================
 // STATE MANAGEMENT
 // ============================================================================
 
@@ -83,7 +95,7 @@ function initializeEventListeners() {
 
 async function loadMetadata() {
   try {
-    const response = await fetch('/api/metadata');
+    const response = await fetch(`${API_BASE_URL}/api/metadata`);
     if (!response.ok) {
       console.warn('Failed to load metadata, using defaults');
       return;
@@ -141,7 +153,6 @@ async function connect() {
 
   try {
     // Build WebSocket URL with audio format parameters
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const params = new URLSearchParams({
       model: state.config.model,
       language: state.config.language,
@@ -149,7 +160,7 @@ async function connect() {
       sample_rate: '16000',   // Requested audio context sample rate
       channels: '1'           // Mono audio
     });
-    const wsUrl = `${protocol}//${window.location.host}/stt/stream?${params}`;
+    const wsUrl = `${WS_BASE_URL}/stt/stream?${params}`;
 
     console.log('Connecting with params:', {
       model: state.config.model,

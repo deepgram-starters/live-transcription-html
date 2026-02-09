@@ -8,6 +8,16 @@
 // STATE MANAGEMENT
 // ============================================================================
 
+/**
+ * Computes the base path from the current page URL.
+ * Ensures a trailing slash so relative paths resolve correctly under subpath deployments.
+ */
+function getBasePath() {
+  let path = window.location.pathname;
+  if (!path.endsWith('/')) path += '/';
+  return path;
+}
+
 const state = {
   ws: null,
   isConnected: false,
@@ -83,7 +93,7 @@ function initializeEventListeners() {
 
 async function loadMetadata() {
   try {
-    const response = await fetch('/api/metadata');
+    const response = await fetch(getBasePath() + 'api/metadata');
     if (!response.ok) {
       console.warn('Failed to load metadata, using defaults');
       return;
@@ -149,7 +159,7 @@ async function connect() {
       channels: '1'           // Mono audio
     });
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/live-transcription?${params}`;
+    const wsUrl = `${protocol}//${window.location.host}${getBasePath()}api/live-transcription?${params}`;
 
     console.log('Connecting with params:', {
       model: state.config.model,

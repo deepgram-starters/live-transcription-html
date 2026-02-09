@@ -2,6 +2,8 @@
 <html lang="en">
 
 <head>
+  <!-- Base path: ensures relative URLs resolve correctly under subpath deployments -->
+  <script>(function(){var b=document.createElement('base'),p=window.location.pathname;if(!p.endsWith('/'))p+='/';b.href=p;document.head.appendChild(b)})()</script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Live speech-to-text transcription using Deepgram" id="pageDescription">
@@ -10,7 +12,7 @@
     integrity="sha512-z3gLpd7yknf1YoNbCzqRKc4qyor8gaKU1qmn+CShxbuBusANI9QpRohGBreCFkKxLhei6S9CQXFEbbKuqLg0DA=="
     crossorigin="anonymous" referrerpolicy="no-referrer" />
   <link rel="stylesheet" href="./node_modules/@deepgram/styles/dist/deepgram.css" />
-  <script type="module" src="/main.js"></script>
+  <script type="module" src="./main.js"></script>
 
   <style>
     /* Layout & Background */

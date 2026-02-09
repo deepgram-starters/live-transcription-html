@@ -18,6 +18,33 @@ function getBasePath() {
   return path;
 }
 
+// ============================================================================
+// SESSION MANAGEMENT
+// ============================================================================
+
+const SESSION_ENDPOINT = getBasePath() + 'api/session';
+let sessionToken = null;
+
+function getPageNonce() {
+  const meta = document.querySelector('meta[name="session-nonce"]');
+  return meta ? meta.content : null;
+}
+
+async function getSessionToken() {
+  if (sessionToken) return sessionToken;
+  const nonce = getPageNonce();
+  const headers = nonce ? { 'X-Session-Nonce': nonce } : {};
+  const response = await fetch(SESSION_ENDPOINT, { headers });
+  if (!response.ok) throw new Error(`Session failed: ${response.status}`);
+  const data = await response.json();
+  sessionToken = data.token;
+  return sessionToken;
+}
+
+// ============================================================================
+// STATE MANAGEMENT (continued)
+// ============================================================================
+
 const state = {
   ws: null,
   isConnected: false,
@@ -150,6 +177,9 @@ async function connect() {
   elements.connectBtn.appendChild(document.createTextNode(' Connecting...'));
 
   try {
+    // Get session token for WebSocket auth
+    const token = await getSessionToken();
+
     // Build WebSocket URL with audio format parameters
     const params = new URLSearchParams({
       model: state.config.model,
@@ -169,8 +199,8 @@ async function connect() {
       channels: 1
     });
 
-    // Create WebSocket
-    state.ws = new WebSocket(wsUrl);
+    // Create WebSocket with JWT auth via subprotocol
+    state.ws = new WebSocket(wsUrl, [`access_token.${token}`]);
     state.ws.binaryType = 'arraybuffer';
 
     state.ws.onopen = handleWebSocketOpen;
@@ -229,6 +259,16 @@ function handleWebSocketError(error) {
 function handleWebSocketClose(event) {
   console.log('WebSocket closed:', event.code, event.reason);
   state.isConnected = false;
+
+  // Handle session expiry
+  if (event.code === 4401) {
+    sessionToken = null;
+    showError('Session expired, please refresh the page.');
+    updateConnectionStatus(false, 'Session Expired');
+    updateMicrophoneStatus(false);
+    return;
+  }
+
   updateConnectionStatus(false, 'Disconnected');
   updateMicrophoneStatus(false);
 

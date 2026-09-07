@@ -5,6 +5,7 @@
   "description": "Pure HTML/CSS/JS frontend for Deepgram Live Transcription",
   "main": "index.html",
   "type": "module",
+  "packageManager": "pnpm@10.33.0",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

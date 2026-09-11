@@ -28,6 +28,7 @@ const state = {
   ws: null,
   isConnected: false,
   providerError: false,
+  connectionAttempt: 0,
   audioContext: null,
   mediaStream: null,
   audioProcessor: null,
@@ -141,6 +142,7 @@ async function loadMetadata() {
 async function connect() {
   if (state.isConnected) return;
 
+  const attempt = ++state.connectionAttempt;
   state.providerError = false;
 
   // Get configuration
@@ -161,6 +163,7 @@ async function connect() {
   try {
     // Get session token for WebSocket auth
     const token = await getSessionToken();
+    if (attempt !== state.connectionAttempt) return;
 
     // Build WebSocket URL with audio format parameters
     const params = new URLSearchParams({
@@ -182,13 +185,14 @@ async function connect() {
     });
 
     // Create WebSocket with JWT auth via subprotocol
-    state.ws = new WebSocket(wsUrl.href, [`access_token.${token}`]);
-    state.ws.binaryType = 'arraybuffer';
+    const socket = new WebSocket(wsUrl.href, [`access_token.${token}`]);
+    state.ws = socket;
+    socket.binaryType = 'arraybuffer';
 
-    state.ws.onopen = handleWebSocketOpen;
-    state.ws.onmessage = handleWebSocketMessage;
-    state.ws.onclose = handleWebSocketClose;
-    state.ws.onerror = handleWebSocketError;
+    socket.onopen = () => handleWebSocketOpen(socket, attempt);
+    socket.onmessage = (event) => handleWebSocketMessage(event, socket, attempt);
+    socket.onclose = (event) => handleWebSocketClose(event, socket, attempt);
+    socket.onerror = (event) => handleWebSocketError(event, socket, attempt);
 
   } catch (error) {
     console.error('Connection error:', error);
@@ -197,12 +201,18 @@ async function connect() {
   }
 }
 
-function handleWebSocketOpen() {
-  console.log('WebSocket connected');
-  onConnected();
+function isCurrentConnection(socket, attempt) {
+  return state.ws === socket && state.connectionAttempt === attempt;
 }
 
-function handleWebSocketMessage(event) {
+function handleWebSocketOpen(socket, attempt) {
+  if (!isCurrentConnection(socket, attempt)) return;
+  console.log('WebSocket connected');
+  onConnected(socket, attempt);
+}
+
+function handleWebSocketMessage(event, socket, attempt) {
+  if (!isCurrentConnection(socket, attempt)) return;
   try {
     const data = JSON.parse(event.data);
 
@@ -242,15 +252,18 @@ function handleWebSocketMessage(event) {
   }
 }
 
-function handleWebSocketError(error) {
+function handleWebSocketError(error, socket, attempt) {
+  if (!isCurrentConnection(socket, attempt)) return;
   console.error('WebSocket error:', error);
   updateConnectionStatus(false, 'Error');
 }
 
-function handleWebSocketClose(event) {
+function handleWebSocketClose(event, socket, attempt) {
+  if (!isCurrentConnection(socket, attempt)) return;
   console.log('WebSocket closed:', event.code, event.reason);
   state.isConnected = false;
   state.ws = null;
+  state.connectionAttempt++;
   stopMediaCapture();
 
   // Handle session expiry
@@ -283,7 +296,8 @@ function handleWebSocketClose(event) {
 // CONNECTION LIFECYCLE
 // ============================================================================
 
-async function onConnected() {
+async function onConnected(socket, attempt) {
+  if (!isCurrentConnection(socket, attempt)) return;
   console.log('WebSocket connected, requesting microphone...');
 
   // Set connected early so audio processor can send data
@@ -301,9 +315,11 @@ async function onConnected() {
   try {
     // Initialize audio context
     await initializeAudioContext();
+    if (!isCurrentConnection(socket, attempt)) return;
 
     // Automatically open microphone
-    await startMicrophone();
+    const microphoneStarted = await startMicrophone(socket, attempt);
+    if (!microphoneStarted || !isCurrentConnection(socket, attempt)) return;
 
     // Update UI
     elements.connectOverlay.classList.add('hidden');
@@ -314,6 +330,7 @@ async function onConnected() {
     console.log('Fully connected - microphone active, ready to transcribe');
 
   } catch (error) {
+    if (!isCurrentConnection(socket, attempt)) return;
     console.error('Failed to initialize audio:', error);
     state.isConnected = false;
     showError('Failed to access microphone. Please allow microphone access and try again.');
@@ -322,6 +339,8 @@ async function onConnected() {
 }
 
 function disconnect() {
+  state.connectionAttempt++;
+
   // Close WebSocket
   if (state.ws) {
     state.ws.close(1000, 'User disconnected');
@@ -401,17 +420,17 @@ async function initializeAudioContext() {
 // MICROPHONE CAPTURE
 // ============================================================================
 
-async function startMicrophone() {
+async function startMicrophone(socket, attempt) {
   if (state.mediaStream) {
     console.log('Microphone already active');
-    return;
+    return true;
   }
 
   updateMicrophoneStatus('Requesting...');
   console.log('Requesting microphone access...');
 
   // Request microphone access
-  state.mediaStream = await navigator.mediaDevices.getUserMedia({
+  const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
       channelCount: 1,
       sampleRate: 16000,
@@ -419,6 +438,11 @@ async function startMicrophone() {
       noiseSuppression: true,
     },
   });
+  if (!isCurrentConnection(socket, attempt)) {
+    stream.getTracks().forEach(track => track.stop());
+    return false;
+  }
+  state.mediaStream = stream;
 
   console.log('Microphone access granted');
 
@@ -426,13 +450,20 @@ async function startMicrophone() {
   if (!state.audioContext) {
     await initializeAudioContext();
   }
+  if (!isCurrentConnection(socket, attempt)) {
+    stream.getTracks().forEach(track => track.stop());
+    if (state.mediaStream === stream) {
+      state.mediaStream = null;
+    }
+    return false;
+  }
 
   const source = state.audioContext.createMediaStreamSource(state.mediaStream);
   state.audioProcessor = state.audioContext.createScriptProcessor(4096, 1, 1);
 
   let audioChunkCount = 0;
   state.audioProcessor.onaudioprocess = (e) => {
-    if (!state.isConnected) return;
+    if (!isCurrentConnection(socket, attempt)) return;
 
     const inputData = e.inputBuffer.getChannelData(0);
 
@@ -467,6 +498,7 @@ async function startMicrophone() {
   // Update status
   updateMicrophoneStatus(true);
   console.log('Microphone active - ready to transcribe');
+  return true;
 }
 
 // ============================================================================

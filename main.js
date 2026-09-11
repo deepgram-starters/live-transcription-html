@@ -250,6 +250,8 @@ function handleWebSocketError(error) {
 function handleWebSocketClose(event) {
   console.log('WebSocket closed:', event.code, event.reason);
   state.isConnected = false;
+  state.ws = null;
+  stopMediaCapture();
 
   // Handle session expiry
   if (event.code === 4401) {
@@ -326,16 +328,7 @@ function disconnect() {
     state.ws = null;
   }
 
-  // Stop microphone and audio processor
-  if (state.audioProcessor) {
-    state.audioProcessor.disconnect();
-    state.audioProcessor = null;
-  }
-
-  if (state.mediaStream) {
-    state.mediaStream.getTracks().forEach(track => track.stop());
-    state.mediaStream = null;
-  }
+  stopMediaCapture();
 
   state.isConnected = false;
 
@@ -354,6 +347,18 @@ function disconnect() {
   elements.disconnectContainer.classList.add('hidden');
   elements.connectOverlay.classList.remove('hidden');
   resetConnectButton();
+}
+
+function stopMediaCapture() {
+  if (state.audioProcessor) {
+    state.audioProcessor.disconnect();
+    state.audioProcessor = null;
+  }
+
+  if (state.mediaStream) {
+    state.mediaStream.getTracks().forEach(track => track.stop());
+    state.mediaStream = null;
+  }
 }
 
 function resetConnectButton() {

@@ -27,6 +27,7 @@ async function getSessionToken() {
 const state = {
   ws: null,
   isConnected: false,
+  providerError: false,
   audioContext: null,
   mediaStream: null,
   audioProcessor: null,
@@ -140,6 +141,8 @@ async function loadMetadata() {
 async function connect() {
   if (state.isConnected) return;
 
+  state.providerError = false;
+
   // Get configuration
   state.config.model = elements.modelSelect.value;
   state.config.language = elements.languageInput.value;
@@ -222,6 +225,15 @@ function handleWebSocketMessage(event) {
       }
     } else if (data.type === 'Metadata') {
       console.log('Metadata:', data);
+    } else if (data.type === 'Error') {
+      const description = typeof data.description === 'string'
+        ? data.description
+        : 'Deepgram connection failed';
+      console.error('Deepgram error:', data);
+      state.providerError = true;
+      showError(description);
+      updateConnectionStatus(false, 'Provider error');
+      updateMicrophoneStatus(false);
     } else if (data.error) {
       console.error('Deepgram error:', data);
     }
@@ -248,7 +260,10 @@ function handleWebSocketClose(event) {
     return;
   }
 
-  updateConnectionStatus(false, 'Disconnected');
+  updateConnectionStatus(
+    false,
+    state.providerError ? 'Provider error' : 'Disconnected'
+  );
   updateMicrophoneStatus(false);
 
   // Show reconnect UI after delay

@@ -244,6 +244,7 @@ function handleWebSocketMessage(event, socket, attempt) {
       showError(description);
       updateConnectionStatus(false, 'Provider error');
       updateMicrophoneStatus(false);
+      stopMediaCapture();
     } else if (data.error) {
       console.error('Deepgram error:', data);
     }

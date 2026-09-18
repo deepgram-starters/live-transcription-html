@@ -4,6 +4,8 @@
  * Uses microphone for audio input
  */
 
+import { addTranscriptItem } from './transcript.js';
+
 // ============================================================================
 // SESSION MANAGEMENT
 // ============================================================================
@@ -553,39 +555,6 @@ function updateMicrophoneStatus(active) {
     elements.micStatus.textContent = active;
     elements.micStatus.style.color = '';
   }
-}
-
-function addTranscriptItem(text, isFinal) {
-  // Remove empty state if present
-  if (elements.emptyState && !elements.emptyState.classList.contains('hidden')) {
-    elements.emptyState.classList.add('hidden');
-  }
-
-  const item = document.createElement('div');
-  item.className = isFinal ? 'transcript-item' : 'transcript-item transcript-item--interim';
-
-  // Add timestamp
-  const timestamp = document.createElement('div');
-  timestamp.className = 'transcript-item__timestamp';
-  timestamp.textContent = new Date().toLocaleTimeString();
-  item.appendChild(timestamp);
-
-  // Add text
-  const textDiv = document.createElement('div');
-  textDiv.className = 'transcript-item__text';
-  textDiv.textContent = text;
-  item.appendChild(textDiv);
-
-  // Replace last interim or append new
-  const lastItem = elements.transcriptContainer.lastElementChild;
-  if (!isFinal && lastItem && lastItem !== elements.emptyState && lastItem.classList.contains('transcript-item--interim')) {
-    elements.transcriptContainer.replaceChild(item, lastItem);
-  } else {
-    elements.transcriptContainer.appendChild(item);
-  }
-
-  // Auto-scroll
-  elements.transcriptContainer.scrollTop = elements.transcriptContainer.scrollHeight;
 }
 
 function showError(message) {

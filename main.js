@@ -28,6 +28,8 @@ const state = {
   ws: null,
   isConnected: false,
   providerError: false,
+  closing: false,
+  closeTimer: null,
   connectionAttempt: 0,
   audioContext: null,
   mediaStream: null,
@@ -144,6 +146,7 @@ async function connect() {
 
   const attempt = ++state.connectionAttempt;
   state.providerError = false;
+  state.closing = false;
 
   // Get configuration
   state.config.model = elements.modelSelect.value;
@@ -235,6 +238,7 @@ function handleWebSocketMessage(event, socket, attempt) {
       }
     } else if (data.type === 'Metadata') {
       console.log('Metadata:', data);
+      if (state.closing) closeSocket(socket);
     } else if (data.type === 'Error') {
       const description = typeof data.description === 'string'
         ? data.description
@@ -265,6 +269,11 @@ function handleWebSocketClose(event, socket, attempt) {
   state.isConnected = false;
   state.ws = null;
   state.connectionAttempt++;
+  state.closing = false;
+  if (state.closeTimer) {
+    clearTimeout(state.closeTimer);
+    state.closeTimer = null;
+  }
   stopMediaCapture();
 
   // Handle session expiry
@@ -340,15 +349,27 @@ async function onConnected(socket, attempt) {
 }
 
 function disconnect() {
-  state.connectionAttempt++;
+  if (state.closing) return;
 
-  // Close WebSocket
-  if (state.ws) {
-    state.ws.close(1000, 'User disconnected');
-    state.ws = null;
+  const socket = state.ws;
+  stopMediaCapture();
+
+  if (socket && socket.readyState < WebSocket.CLOSING) {
+    state.closing = true;
+    updateConnectionStatus(false, 'Finalizing transcription...');
+    try {
+      socket.send(JSON.stringify({ type: 'CloseStream' }));
+      state.closeTimer = setTimeout(() => closeSocket(socket), 2000);
+      return;
+    } catch (error) {
+      console.error('Error finalizing transcription:', error);
+    }
   }
 
-  stopMediaCapture();
+  closeSocket(socket);
+  state.connectionAttempt++;
+
+  state.ws = null;
 
   state.isConnected = false;
 
@@ -367,6 +388,16 @@ function disconnect() {
   elements.disconnectContainer.classList.add('hidden');
   elements.connectOverlay.classList.remove('hidden');
   resetConnectButton();
+}
+
+function closeSocket(socket) {
+  if (state.closeTimer) {
+    clearTimeout(state.closeTimer);
+    state.closeTimer = null;
+  }
+  if (socket && socket.readyState < WebSocket.CLOSING) {
+    socket.close(1000, 'User disconnected');
+  }
 }
 
 function stopMediaCapture() {

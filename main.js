@@ -27,6 +27,8 @@ async function getSessionToken() {
 const state = {
   ws: null,
   isConnected: false,
+  isDisconnecting: false,
+  disconnectTimeout: null,
   providerError: false,
   connectionAttempt: 0,
   audioContext: null,
@@ -235,6 +237,9 @@ function handleWebSocketMessage(event, socket, attempt) {
       }
     } else if (data.type === 'Metadata') {
       console.log('Metadata:', data);
+      if (state.isDisconnecting) {
+        socket.close(1000, 'User disconnected');
+      }
     } else if (data.type === 'Error') {
       const description = typeof data.description === 'string'
         ? data.description
@@ -262,10 +267,19 @@ function handleWebSocketError(error, socket, attempt) {
 function handleWebSocketClose(event, socket, attempt) {
   if (!isCurrentConnection(socket, attempt)) return;
   console.log('WebSocket closed:', event.code, event.reason);
+  if (state.disconnectTimeout) {
+    clearTimeout(state.disconnectTimeout);
+    state.disconnectTimeout = null;
+  }
   state.isConnected = false;
+  state.isDisconnecting = false;
   state.ws = null;
   state.connectionAttempt++;
   stopMediaCapture();
+  elements.currentModel.textContent = '-';
+  elements.currentLanguage.textContent = '-';
+  elements.modelSelect.disabled = false;
+  elements.languageInput.disabled = false;
 
   // Handle session expiry
   if (event.code === 4401) {
@@ -340,33 +354,33 @@ async function onConnected(socket, attempt) {
 }
 
 function disconnect() {
-  state.connectionAttempt++;
+  const socket = state.ws;
+  if (!socket || state.isDisconnecting) return;
 
-  // Close WebSocket
-  if (state.ws) {
-    state.ws.close(1000, 'User disconnected');
-    state.ws = null;
-  }
+  state.isDisconnecting = true;
 
   stopMediaCapture();
-
-  state.isConnected = false;
-
-  // Update UI
-  updateConnectionStatus(false, 'Disconnected');
+  updateConnectionStatus(false, 'Finishing transcription...');
   updateMicrophoneStatus(false);
-  elements.currentModel.textContent = '-';
-  elements.currentLanguage.textContent = '-';
 
-  // Re-enable config
-  elements.modelSelect.disabled = false;
-  elements.languageInput.disabled = false;
+  if (socket.readyState !== WebSocket.OPEN) {
+    socket.close(1000, 'User disconnected');
+    return;
+  }
 
-  // Show connect overlay
-  elements.transcriptContainer.classList.add('hidden');
-  elements.disconnectContainer.classList.add('hidden');
-  elements.connectOverlay.classList.remove('hidden');
-  resetConnectButton();
+  try {
+    socket.send(JSON.stringify({ type: 'CloseStream' }));
+  } catch (error) {
+    console.warn('Failed to finalize transcription before disconnecting:', error);
+    socket.close(1000, 'User disconnected');
+    return;
+  }
+
+  state.disconnectTimeout = setTimeout(() => {
+    if (state.ws === socket) {
+      socket.close(1000, 'User disconnected');
+    }
+  }, 2000);
 }
 
 function stopMediaCapture() {

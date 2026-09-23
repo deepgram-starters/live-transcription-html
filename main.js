@@ -236,12 +236,12 @@ function handleWebSocketMessage(event, socket, attempt) {
     } else if (data.type === 'Metadata') {
       console.log('Metadata:', data);
     } else if (data.type === 'Error') {
-      const description = typeof data.description === 'string'
-        ? data.description
+      const message = typeof data.error?.message === 'string'
+        ? data.error.message
         : 'Deepgram connection failed';
       console.error('Deepgram error:', data);
       state.providerError = true;
-      showError(description);
+      showError(message);
       updateConnectionStatus(false, 'Provider error');
       updateMicrophoneStatus(false);
       stopMediaCapture();

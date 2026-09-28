@@ -4,7 +4,7 @@
  * Uses microphone for audio input
  */
 
-import { addTranscriptItem } from './transcript.js';
+import { getErrorMessage, renderTranscript } from './message.js';
 
 // ============================================================================
 // SESSION MANAGEMENT
@@ -226,16 +226,9 @@ function handleWebSocketMessage(event, socket, attempt) {
 
     // Handle different message types from Deepgram
     if (data.type === 'Results' || data.channel) {
-      const transcript = data.channel?.alternatives?.[0]?.transcript || data.transcript || '';
-      const isFinal = data.is_final || data.speech_final || false;
-
-      if (transcript) {
-        addTranscriptItem(transcript, isFinal);
-
-        if (isFinal) {
-          state.stats.finals++;
-          elements.finalCount.textContent = state.stats.finals;
-        }
+      if (renderTranscript(data, elements)) {
+        state.stats.finals++;
+        elements.finalCount.textContent = state.stats.finals;
       }
     } else if (data.type === 'Metadata') {
       console.log('Metadata:', data);
@@ -243,9 +236,7 @@ function handleWebSocketMessage(event, socket, attempt) {
         socket.close(1000, 'User disconnected');
       }
     } else if (data.type === 'Error') {
-      const message = typeof data.error?.message === 'string'
-        ? data.error.message
-        : 'Deepgram connection failed';
+      const message = getErrorMessage(data);
       console.error('Deepgram error:', data);
       state.providerError = true;
       showError(message);

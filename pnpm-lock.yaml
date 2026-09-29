@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@deepgram/styles':
-        specifier: latest
+        specifier: ^0.2.15
         version: 0.2.15
     devDependencies:
       vite:

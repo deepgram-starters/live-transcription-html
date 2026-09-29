@@ -35,7 +35,7 @@
     "not op_mini all"
   ],
   "dependencies": {
-    "@deepgram/styles": "latest"
+    "@deepgram/styles": "^0.2.15"
   },
   "devDependencies": {
     "vite": "^7.3.5"

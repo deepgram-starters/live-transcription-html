@@ -21,7 +21,7 @@
     }
 
     /* Column Styling */
-    .dg-column--sidebar-left {
+    .dg-columns__column--left {
       border-right: 1px solid rgba(255, 255, 255, 0.1);
       border-bottom: 1px solid rgba(255, 255, 255, 0.1);
       background: var(--dg-almost-black, #050506);
@@ -29,7 +29,7 @@
       height: 100%;
     }
 
-    .dg-column--main {
+    .dg-columns__column--center {
       background: var(--dg-background, #0b0b0c);
       overflow: hidden;
       display: flex;
@@ -40,7 +40,7 @@
       position: relative;
     }
 
-    .dg-column--sidebar-right {
+    .dg-columns__column--right {
       border-left: 1px solid rgba(255, 255, 255, 0.1);
       border-top: 1px solid rgba(255, 255, 255, 0.1);
       background: var(--dg-almost-black, #050506);
@@ -48,14 +48,14 @@
       height: 100%;
     }
 
-    @media (min-width: 768px) {
-      .dg-column--sidebar-right {
+    @media (min-width: 1280px) {
+      .dg-columns__column--right {
         border-top: none;
       }
     }
 
     @media (min-width: 1024px) {
-      .dg-column--sidebar-left {
+      .dg-columns__column--left {
         border-bottom: none;
       }
     }
@@ -326,7 +326,7 @@
     <div class="dg-columns__wrapper" style="height: 100%;">
 
       <!-- Left Sidebar: Configuration -->
-      <aside class="dg-column dg-column--sidebar-left dg-column--lg">
+      <aside class="dg-columns__column dg-columns__column--left dg-columns__column--lg">
         <div class="dg-content-box">
           <h3 class="dg-form-label">Configuration</h3>
 
@@ -344,24 +344,32 @@
             </select>
           </div>
 
-          <!-- Language Input -->
+          <!-- Language Selection -->
           <div class="config-section">
             <label class="dg-form-label" for="language-input">
               <i class="fa-solid fa-language"></i> Language
             </label>
-            <input
-              type="text"
-              id="language-input"
-              class="dg-input"
-              value="en"
-              placeholder="en"
-            />
+            <select id="language-input" class="dg-select">
+              <option value="en">English</option>
+              <option value="multi">Multilingual (auto-detect)</option>
+              <option value="ar">Arabic</option>
+              <option value="zh">Chinese</option>
+              <option value="nl">Dutch</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="hi">Hindi</option>
+              <option value="it">Italian</option>
+              <option value="ja">Japanese</option>
+              <option value="ko">Korean</option>
+              <option value="pt">Portuguese</option>
+              <option value="es">Spanish</option>
+            </select>
           </div>
         </div>
       </aside>
 
       <!-- Main Content: Transcript Display -->
-      <main class="dg-column dg-column--main">
+      <main class="dg-columns__column dg-columns__column--center">
         <div class="main-content-container">
           <!-- Connect Overlay -->
           <div class="connect-overlay" id="connect-overlay">
@@ -397,7 +405,7 @@
       </main>
 
       <!-- Right Sidebar: Status & Stats -->
-      <aside class="dg-column dg-column--sidebar-right">
+      <aside class="dg-columns__column dg-columns__column--right">
         <div class="dg-content-box">
           <h3 class="dg-form-label" style="margin-bottom: 1rem;">Status</h3>
           <div class="status-grid">
